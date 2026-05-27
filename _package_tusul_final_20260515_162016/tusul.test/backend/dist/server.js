@@ -9,6 +9,7 @@ import { analyzeCvWithGemini } from './lib/geminiAnalysis.js';
 import { buildImprovedCvFromSource, extractCandidateName, injectAboutSection, mergeContactIntoCv, parseCvSections, resolveCandidateName, } from './lib/cvSections.js';
 import { buildProfessionalAbout } from './lib/cvProfessionalSummary.js';
 import { createProfessionalCvPdf } from './lib/professionalCvPdf.js';
+import { applyCors } from './lib/cors.js';
 const backendRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 dotenv.config({ path: path.join(backendRoot, '.env') });
 const require = createRequire(import.meta.url);
@@ -51,6 +52,7 @@ const dataDir = path.join(backendRoot, 'data');
 const dbPath = path.join(dataDir, 'app-db.json');
 const emptyDb = { users: [], sessions: [], histories: [] };
 app.disable('x-powered-by');
+applyCors(app);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use((req, res, next) => {
