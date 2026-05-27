@@ -9,7 +9,7 @@ import { analyzeCvWithGemini } from './lib/geminiAnalysis.js';
 import { buildImprovedCvFromSource, extractCandidateName, injectAboutSection, mergeContactIntoCv, parseCvSections, resolveCandidateName, } from './lib/cvSections.js';
 import { buildProfessionalAbout } from './lib/cvProfessionalSummary.js';
 import { createProfessionalCvPdf } from './lib/professionalCvPdf.js';
-import { applyCors } from './lib/cors.js';
+import { applyCors, isCorsConfigured } from './lib/cors.js';
 const backendRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 dotenv.config({ path: path.join(backendRoot, '.env') });
 const require = createRequire(import.meta.url);
@@ -825,6 +825,7 @@ app.get('/api/health', (_req, res) => {
     success(res, {
         status: 'ok',
         api: 'AI Career Advisor',
+        corsConfigured: isCorsConfigured(),
         aiProvider: process.env.GEMINI_API_KEY
             ? 'gemini'
             : process.env.OPENAI_API_KEY
