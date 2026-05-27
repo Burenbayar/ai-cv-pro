@@ -8,8 +8,7 @@
     "dev:watch": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit",
-    "postinstall": "prisma generate"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.0",
