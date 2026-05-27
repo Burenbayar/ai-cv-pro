@@ -1,5 +1,5 @@
-import {buildProfessionalAbout, isSkillHeavyAbout} from './cvProfessionalSummary';
-import {extractCandidateName, extractContact, type CvLanguage, type ParsedCv} from './cvSections';
+import {buildProfessionalAbout, isSkillHeavyAbout} from './cvProfessionalSummary.js';
+import {extractCandidateName, extractContact, type CvLanguage, type ParsedCv} from './cvSections.js';
 
 const TECH_NAME_RE =
   /^(postgresql|javascript|typescript|react|next\.?js|node\.?js|python|java|sql|html|css|figma|mongodb|docker|aws|git|express|graphql)$/i;

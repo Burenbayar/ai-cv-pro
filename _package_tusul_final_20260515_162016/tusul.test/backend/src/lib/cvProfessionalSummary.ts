@@ -1,4 +1,4 @@
-import {type CvLanguage} from './cvSections';
+import {type CvLanguage} from './cvSections.js';
 
 const SKILL_TOKEN =
   /\b(javascript|typescript|react|next\.?js|node\.?js|sql|postgresql|python|java|html|css|figma|mongodb|docker|aws|git|express|graphql|tailwind)\b/gi;

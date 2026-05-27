@@ -1,4 +1,4 @@
-import type {CvLanguage} from './cvSections';
+import type {CvLanguage} from './cvSections.js';
 
 export const CV_THEME = {
   navy:      '#333E5B',

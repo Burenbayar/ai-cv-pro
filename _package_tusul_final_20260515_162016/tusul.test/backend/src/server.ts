@@ -6,7 +6,7 @@ import fs from 'fs';
 import {createRequire} from 'module';
 import {randomUUID} from 'crypto';
 import dotenv from 'dotenv';
-import {analyzeCvWithGemini} from './lib/geminiAnalysis';
+import {analyzeCvWithGemini} from './lib/geminiAnalysis.js';
 import {
   buildImprovedCvFromSource,
   extractCandidateName,
@@ -14,9 +14,9 @@ import {
   mergeContactIntoCv,
   parseCvSections,
   resolveCandidateName,
-} from './lib/cvSections';
-import {buildProfessionalAbout} from './lib/cvProfessionalSummary';
-import {createProfessionalCvPdf} from './lib/professionalCvPdf';
+} from './lib/cvSections.js';
+import {buildProfessionalAbout} from './lib/cvProfessionalSummary.js';
+import {createProfessionalCvPdf} from './lib/professionalCvPdf.js';
 
 const backendRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 dotenv.config({path: path.join(backendRoot, '.env')});

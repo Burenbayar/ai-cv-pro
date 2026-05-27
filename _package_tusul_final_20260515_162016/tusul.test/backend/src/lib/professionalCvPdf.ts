@@ -1,7 +1,7 @@
 import fs from 'fs';
 import {createRequire} from 'module';
-import {enrichParsedCv, parseCvSections, resolveCandidateName, type ParsedCv} from './cvSections';
-import {normalizeCvTextForParse, sanitizeParsedForTemplate} from './cvTemplateSanitize';
+import {enrichParsedCv, parseCvSections, resolveCandidateName, type ParsedCv} from './cvSections.js';
+import {normalizeCvTextForParse, sanitizeParsedForTemplate} from './cvTemplateSanitize.js';
 import {
   CV_THEME,
   parseContactFields,
@@ -9,7 +9,7 @@ import {
   splitExperienceBlock,
   splitExperienceBlocks,
   templateLabels,
-} from './cvTemplateTheme';
+} from './cvTemplateTheme.js';
 
 const require = createRequire(import.meta.url);
 const PDFDocument = require('pdfkit');

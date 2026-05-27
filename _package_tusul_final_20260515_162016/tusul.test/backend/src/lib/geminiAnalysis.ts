@@ -8,7 +8,7 @@ export type GeminiAnalyzeInput = {
   language: 'mn' | 'en';
   cvText: string;
   cvFileName?: string;
-};
+};  
 
 const geminiSchema: ResponseSchema = {
   type: SchemaType.OBJECT,

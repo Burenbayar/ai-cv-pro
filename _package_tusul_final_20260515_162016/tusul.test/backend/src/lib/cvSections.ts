@@ -1,4 +1,4 @@
-import {buildProfessionalAbout} from './cvProfessionalSummary';
+import {buildProfessionalAbout} from './cvProfessionalSummary.js';
 
 export type CvLanguage = 'mn' | 'en';
 
