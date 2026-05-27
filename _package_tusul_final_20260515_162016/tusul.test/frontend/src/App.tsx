@@ -1,5 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import type {MutableRefObject, ReactNode} from 'react';
+import {apiUrl} from './lib/api';
 import {t, tf, langStorage} from './i18n';
 import type {Language} from './i18n';
 import {
@@ -459,7 +460,7 @@ async function fetchAndApplyHistory(
   accountFullName?: string,
 ) {
   try {
-    const histRes = await fetch('/api/career/history', {
+    const histRes = await fetch(apiUrl('/api/career/history'), {
       headers: {Authorization: `Bearer ${authToken}`},
     });
     if (!histRes.ok) {
@@ -484,7 +485,7 @@ async function fetchAndApplyHistory(
     );
 
     const latest = history[0];
-    const detailRes = await fetch(`/api/career/analysis/${latest.id}`, {
+    const detailRes = await fetch(apiUrl(`/api/career/analysis/${latest.id}`), {
       headers: {Authorization: `Bearer ${authToken}`},
     });
     if (!detailRes.ok) {
@@ -573,7 +574,7 @@ export default function App() {
       setActiveView('login');
       return;
     }
-    fetch('/api/auth/me', {headers: {Authorization: `Bearer ${stored.token}`}})
+    fetch(apiUrl('/api/auth/me'), {headers: {Authorization: `Bearer ${stored.token}`}})
       .then((r) => r.json())
       .then(async (data) => {
         if (data.user) {
@@ -622,7 +623,7 @@ export default function App() {
       formData.append('persist', 'false');
       if (user.fullName) formData.append('fullName', user.fullName);
 
-      const res = await fetch('/api/career/analyze', {
+      const res = await fetch(apiUrl('/api/career/analyze'), {
         method: 'POST',
         headers: {Authorization: `Bearer ${token}`},
         body: formData,
@@ -662,7 +663,7 @@ export default function App() {
 
   const handleLogin = async (email: string, password: string): Promise<string | null> => {
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(apiUrl('/api/auth/login'), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({email, password}),
@@ -685,7 +686,7 @@ export default function App() {
 
   const handleRegister = async (fullName: string, email: string, password: string): Promise<string | null> => {
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await fetch(apiUrl('/api/auth/register'), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({fullName, email, password, language: lang}),
@@ -706,7 +707,7 @@ export default function App() {
 
   const handleLogout = async () => {
     if (token) {
-      fetch('/api/auth/logout', {method: 'POST', headers: {Authorization: `Bearer ${token}`}}).catch(() => {});
+      fetch(apiUrl('/api/auth/logout'), {method: 'POST', headers: {Authorization: `Bearer ${token}`}}).catch(() => {});
     }
     clearAuth();
     setUser(null);
@@ -719,7 +720,7 @@ export default function App() {
   const loadHistoryItem = async (cvId: string) => {
     setHistoryLoading(cvId);
     try {
-      const res = await fetch(`/api/career/analysis/${cvId}`, {
+      const res = await fetch(apiUrl(`/api/career/analysis/${cvId}`), {
         headers: {Authorization: `Bearer ${token}`},
       });
       if (!res.ok) throw new Error('fetch failed');
@@ -816,7 +817,7 @@ export default function App() {
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch('/api/career/analyze', {method: 'POST', headers, body: formData});
+      const res = await fetch(apiUrl('/api/career/analyze'), {method: 'POST', headers, body: formData});
       const payload = await res.json();
 
       if (res.status === 401) {
@@ -877,7 +878,7 @@ export default function App() {
 
   const acceptFeedback = async (id: string) => {
     if (token && currentCvId) {
-      await fetch(`/api/career/suggestions/${id}/approve`, {
+      await fetch(apiUrl(`/api/career/suggestions/${id}/approve`), {
         method: 'POST',
         headers: {Authorization: `Bearer ${token}`},
       }).catch(() => {});
@@ -898,7 +899,7 @@ export default function App() {
 
   const rejectFeedback = async (id: string) => {
     if (token && currentCvId) {
-      await fetch(`/api/career/suggestions/${id}/reject`, {
+      await fetch(apiUrl(`/api/career/suggestions/${id}/reject`), {
         method: 'POST',
         headers: {Authorization: `Bearer ${token}`},
       }).catch(() => {});
@@ -913,7 +914,7 @@ export default function App() {
   const regenerateFeedback = async (id: string) => {
     if (token && currentCvId) {
       try {
-        const res = await fetch(`/api/career/suggestions/${id}/regenerate`, {
+        const res = await fetch(apiUrl(`/api/career/suggestions/${id}/regenerate`), {
           method: 'POST',
           headers: {Authorization: `Bearer ${token}`},
         });
@@ -957,7 +958,7 @@ export default function App() {
     try {
       const headers: Record<string, string> = {'Content-Type': 'application/json'};
       if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch('/api/career/export-pdf', {
+      const res = await fetch(apiUrl('/api/career/export-pdf'), {
         method: 'POST',
         headers,
         body: JSON.stringify({
