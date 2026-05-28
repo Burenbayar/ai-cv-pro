@@ -48,6 +48,7 @@ import {CareerRoadmapPanel} from './components/CareerRoadmapPanel';
 import {WorkflowStepper} from './components/WorkflowStepper';
 import type {WorkflowStepDef} from './components/WorkflowStepper';
 import {resolveCandidateName} from '@shared/cvSections';
+import {resolveDisplayRole} from '@shared/cvProfession';
 
 type CvStatus = 'uploaded' | 'parsing' | 'analyzing' | 'completed' | 'failed';
 type Severity = 'low' | 'medium' | 'high';
@@ -333,7 +334,11 @@ function normalizeApiAnalysis(payload: any, lang: Language): AnalysisResult | nu
       cvText: cvTextForName,
       fullName: data.fullName || '',
     }),
-    targetRole: data.targetRole || data.jobTitle || '',
+    targetRole: resolveDisplayRole(
+      data.targetRole || data.jobTitle || '',
+      cvTextForName,
+      responseLanguage,
+    ),
     rewrittenCv: data.rewrittenCv || data.improvedCv || data.improved_cv || '',
     sourceCvText: String(data.sourceCvText || payload.sourceCvText || ''),
     scores: scores.length ? scores : defaultAnalysis.scores,
@@ -449,7 +454,11 @@ function normalizeDbAnalysis(
       analyzedAt: String(record.createdAt || a.metadata?.generatedAt || ''),
       candidateName: resolvedName,
       language: a.language === 'en' || record.language === 'en' ? 'en' : 'mn',
-      targetRole: a.targetRole || record.jobDescription || '',
+      targetRole: resolveDisplayRole(
+        a.targetRole || record.jobDescription || '',
+        cvText,
+        a.language === 'en' || record.language === 'en' ? 'en' : 'mn',
+      ),
       rewrittenCv: a.rewrittenCv || record.rewrittenCv || '',
       sourceCvText: a.sourceCvText || record.sourceCvText || '',
       scores: Array.isArray(a.scores) && a.scores.length ? a.scores : defaultAnalysis.scores,
@@ -465,6 +474,29 @@ function normalizeDbAnalysis(
       career: a.career || {currentLevel: '', recommendedRoles: [], missingSkills: [], roadmap: [], estimatedDuration: ''},
     },
   };
+}
+
+async function refreshHistoryRecordsOnly(authToken: string, setRecords: (r: CvRecord[]) => void) {
+  try {
+    const histRes = await fetch(apiUrl('/api/career/history'), {
+      headers: {Authorization: `Bearer ${authToken}`},
+    });
+    if (!histRes.ok) return;
+    const {history} = await histRes.json();
+    if (!Array.isArray(history)) return;
+    setRecords(
+      history.map((h: {id: string; fileName: string; fileType: string; uploadedAt: string; status: CvStatus; overall: number}) => ({
+        id: h.id,
+        fileName: h.fileName,
+        fileType: h.fileType,
+        uploadedAt: (h.uploadedAt || '').slice(0, 10),
+        status: h.status,
+        overall: h.overall || 0,
+      })),
+    );
+  } catch {
+    /* list refresh is best-effort */
+  }
 }
 
 async function fetchAndApplyHistory(
@@ -785,6 +817,13 @@ export default function App() {
       return;
     }
     setSelectedFile(file);
+    setAnalysis((prev) => ({
+      ...prev,
+      targetRole: '',
+      summary: '',
+      rewrittenCv: '',
+      sourceCvText: '',
+    }));
 
     if (fileType === 'pdf') {
       try {
@@ -866,7 +905,7 @@ export default function App() {
           status: 'completed',
           overall: newOverall,
         };
-        await fetchAndApplyHistory(token, sessionResetters, user?.fullName);
+        await refreshHistoryRecordsOnly(token, setRecords);
         const chars = Number(payload.cvTextLength || 0);
         const hasNewCv = Boolean(normalized.rewrittenCv.trim());
         setTemporaryToast(
@@ -1985,8 +2024,9 @@ function HistoryView({lang, records, historyLoading, onLoad, onUpload}: {
                   </p>
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-3">
-                <div className="flex items-center gap-2">
+              <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                <div className="flex w-full items-center justify-between gap-3 sm:w-auto sm:justify-end">
+                  <div className="flex items-center gap-2">
                   <div className="h-2 w-20 rounded-full bg-slate-100">
                     <div
                       className="h-2 rounded-full bg-blue-600 transition-all"
@@ -1996,12 +2036,13 @@ function HistoryView({lang, records, historyLoading, onLoad, onUpload}: {
                   <span className="min-w-[3rem] rounded-md bg-brand-dark px-2.5 py-1 text-center text-xs font-black text-white">
                     {record.overall}/100
                   </span>
+                  </div>
+                  <StatusPill status={record.status} lang={lang} />
                 </div>
-                <StatusPill status={record.status} lang={lang} />
                 <button
                   onClick={() => onLoad(record.id)}
                   disabled={historyLoading === record.id}
-                  className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 hover:bg-brand-bg disabled:opacity-50"
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 hover:bg-brand-bg disabled:opacity-50 sm:w-auto"
                   type="button"
                 >
                   {historyLoading === record.id
@@ -2241,8 +2282,15 @@ type ParsedInterviewItem = {
 };
 
 function parseInterviewItem(raw: string): ParsedInterviewItem {
-  const cleaned = raw.trim();
+  const cleaned = raw
+    .trim()
+    .replace(/^["'`[{(]+/, '')
+    .replace(/["'`\]})]+$/, '')
+    .replace(/^\d+\s*[.)-]\s*/, '')
+    .trim();
   if (!cleaned) return {question: '', suggestion: ''};
+  if (/^[;:,.{}[\]()]+$/.test(cleaned)) return {question: '', suggestion: ''};
+  if ((cleaned.match(/[A-Za-zА-Яа-яӨөҮүЁё]/g) || []).length < 3) return {question: '', suggestion: ''};
 
   const mnMatch = cleaned.match(/(?:^|\n)\s*Асуулт:\s*([\s\S]*?)(?:\n\s*Хариултын санаа:\s*([\s\S]*))?$/i);
   if (mnMatch) {

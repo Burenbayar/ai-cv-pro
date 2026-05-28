@@ -127,7 +127,7 @@ export function sanitizeParsedForTemplate(
     skills: cleanSkills,
     languages: cleanLanguages,
     hobbies,
-    about: about.slice(0, 450),
+    about: about.slice(0, 560),
     experience,
     references: parsed.references.filter((l) => l.length < 120).slice(0, 4),
   };

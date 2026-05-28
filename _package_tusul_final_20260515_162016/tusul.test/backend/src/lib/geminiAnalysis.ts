@@ -79,10 +79,10 @@ function buildPrompt(input: GeminiAnalyzeInput) {
     'Be practical, specific, and concise. Do not invent employers, dates, degrees, or certifications.',
     'CRITICAL: Read the full CV text in the user message. Analyze ONLY that document. Do not use generic template text.',
     'The rewrittenCv field must be a complete NEW professional CV built from the uploaded CV facts — improved wording, structure, and Mongolian grammar.',
-    'Fill cvProfile from the CV only. Profession must match the CV (accountant stays accountant, not software). Job requirements tailor summary/skills only.',
+    'Fill cvProfile from the CV only. targetRole must be this candidate\'s profession from the uploaded CV — never a previous CV\'s role. Students: use field of study (мэргэжил/чиглэл). Job requirements only tailor summary/skills.',
     'Use friendly advisory wording for roadmap/recommendations in Mongolian (e.g. "хийгээрэй", "бэлдээрэй"), avoid commanding tone.',
     'Format rewrittenCv with Mongolian headers when language is mn: ХОЛБОО БАРИХ, СОНИРХОЛ, УР ЧАДВАР, ХЭЛ, МИНИЙ ТУХАЙ, БОЛОВСРОЛ, АЖЛЫН ТУРШЛАГА.',
-    'For МИНИЙ ТУХАЙ (professional summary / goal): write 3–5 sentences about career direction, interests, motivation, and goals from the CV. Do NOT list programming skills or technologies in this section — skills belong only in УР ЧАДВАР.',
+    'For МИНИЙ ТУХАЙ / summary: write 3–5 complete sentences from the CV only. Students must name their field of study (мэргэжил/чиглэл), school, and career goal — not generic filler. No skill lists here.',
     'Include every real job, project, school, skill, phone, and email found in the source CV. Improve bullets with action verbs; add metrics only if present in source.',
     'Score atsScore from 0-100 based on real ATS readiness for the target role.',
   ].join(' ');

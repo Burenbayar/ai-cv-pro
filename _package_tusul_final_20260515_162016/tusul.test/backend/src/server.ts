@@ -349,6 +349,31 @@ function toStringArray(value: unknown) {
   return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : [];
 }
 
+function normalizeInterviewLine(value: string): string {
+  const clean = value
+    .replace(/^["'`[{(]+/, '')
+    .replace(/["'`\]})]+$/, '')
+    .replace(/^\d+\s*[.)-]\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean;
+}
+
+function looksLikeBrokenInterviewLine(value: string): boolean {
+  if (!value) return true;
+  if (value.length <= 2) return true;
+  if (/^[;:,.{}[\]()]+$/.test(value)) return true;
+  const letters = (value.match(/[A-Za-zА-Яа-яӨөҮүЁё]/g) || []).length;
+  return letters < 3;
+}
+
+function sanitizeInterviewItems(items: string[], fallback: string[]): string[] {
+  const cleaned = items
+    .map(normalizeInterviewLine)
+    .filter((item) => !looksLikeBrokenInterviewLine(item));
+  return cleaned.length >= Math.min(2, fallback.length) ? cleaned : fallback;
+}
+
 function buildInterviewPrep(
   payload: {
     targetRole: string;
@@ -417,10 +442,10 @@ function buildInterviewPrep(
 }
 
 function normalizeInterview(input: any, fallback: InterviewPrep): InterviewPrep {
-  const technical = toStringArray(input?.technical);
-  const hr = toStringArray(input?.hr);
-  const behavioral = toStringArray(input?.behavioral);
-  const suggestedAnswers = toStringArray(input?.suggestedAnswers);
+  const technical = sanitizeInterviewItems(toStringArray(input?.technical), fallback.technical);
+  const hr = sanitizeInterviewItems(toStringArray(input?.hr), fallback.hr);
+  const behavioral = sanitizeInterviewItems(toStringArray(input?.behavioral), fallback.behavioral);
+  const suggestedAnswers = sanitizeInterviewItems(toStringArray(input?.suggestedAnswers), fallback.suggestedAnswers);
 
   return {
     technical: technical.length ? technical : fallback.technical,
@@ -443,7 +468,24 @@ function isQualityAiRewrittenCv(rewrittenCv: string, sourceCvText: string): bool
   return hasStructure && hasContent;
 }
 
-function sanitizeSummaryForCv(summary: string, cvText: string, language: Language, displayName: string): string {
+function sanitizeSummaryForCv(
+  summary: string,
+  cvText: string,
+  language: Language,
+  displayName: string,
+  targetRole = '',
+): string {
+  const aboutFromCv = buildProfessionalAbout({
+    cvText,
+    targetRole,
+    displayName,
+    language,
+    existingAbout: summary,
+  });
+  if (aboutFromCv.length >= 80) {
+    return aboutFromCv;
+  }
+
   let s = String(summary || '').trim();
   if (!s) return s;
   const accounting = /нягтлан|бүртгэл|accountant|санхүү/i.test(cvText);
@@ -725,7 +767,7 @@ async function requestOpenAiAnalysis(request: ReturnType<typeof normalizeRequest
           : 'Write every human-readable value in natural, professional English.',
         'Keep JSON keys in English.',
         'Do not invent employers, dates, degrees, certifications, or private facts.',
-        'Extract cvProfile ONLY from the CV. The candidate profession must match the CV (e.g. accountant CV must stay accounting — never label an accountant as software engineer).',
+        'Extract cvProfile ONLY from the uploaded CV. targetRole must be the candidate\'s profession from THIS CV only — never reuse a previous person\'s role. If they are a student (оюутан), set targetRole from their field of study / мэргэжил / чиглэл (e.g. "Санхүү, эдийн засгийн мэргэжлийн оюутан").',
         'Job requirements are separate: use them to tailor summary and skills, not to replace the candidate profession.',
         'Use supportive, advisory tone for roadmap and recommendations (e.g., "хийгээрэй", "бэлдээрэй"), not commanding tone.',
         'Do not invent employers, dates, degrees, certifications, or private facts.',
@@ -896,7 +938,7 @@ async function analyzeCvPayload(req: Request) {
     rewrittenCv: finalizeRewrittenCv(result.rewrittenCv, request, cvText, result.skills, result.summary, result.experienceLevel),
     candidateName: nameFromCv,
     targetRole: resolveDisplayRole(result.targetRole || request.targetRole, cvText, request.language),
-    summary: sanitizeSummaryForCv(result.summary, cvText, request.language, nameFromCv),
+    summary: sanitizeSummaryForCv(result.summary, cvText, request.language, nameFromCv, result.targetRole),
   };
 
   logAiResponse(result.metadata?.provider || 'analysis', 'final result', {
@@ -1023,7 +1065,7 @@ function buildAnalysisRecord(item: HistoryItem) {
     analysis: {
       language: item.request.language,
       candidateName: item.result.candidateName,
-      targetRole: item.request.targetRole,
+      targetRole: item.result.targetRole,
       scores: dashboard.scores,
       summary: dashboard.summary,
       strengths: dashboard.strengths,

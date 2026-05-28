@@ -1,3 +1,4 @@
+export { parseContactFields } from './cvContactParse.js';
 export const CV_THEME = {
     navy: '#333E5B',
     navyLight: '#495883',
@@ -14,8 +15,10 @@ export function templateLabels(lang) {
             cv: 'Анкет / CV',
             phone: 'УТАС',
             email: 'И-МЭЙЛ',
+            address: 'ХАЯГ',
             personal: 'Хувийн мэдээлэл',
             skills: 'Ур чадвар',
+            hobbies: 'Сонирхол',
             languages: 'Гадаад хэл',
             about: 'Товч танилцуулга / Зорилго',
             education: 'Боловсрол',
@@ -27,8 +30,10 @@ export function templateLabels(lang) {
             cv: 'Resume / CV',
             phone: 'PHONE',
             email: 'EMAIL',
+            address: 'ADDRESS',
             personal: 'Personal',
             skills: 'Skills',
+            hobbies: 'Interests',
             languages: 'Languages',
             about: 'Summary / Objective',
             education: 'Education',
@@ -43,20 +48,6 @@ export function splitExperienceBlocks(lines) {
     const text = lines.join('\n');
     const blocks = text.split(/\n{2,}/).map((b) => b.trim()).filter((b) => b.length > 12);
     return blocks.length > 1 ? blocks : lines.filter((l) => l.trim().length > 8);
-}
-export function parseContactFields(lines) {
-    let phone = '';
-    let email = '';
-    const rest = [];
-    for (const line of lines) {
-        if (/@/.test(line))
-            email = line;
-        else if (/\+?\d[\d\s-]{6,}/.test(line))
-            phone = line;
-        else
-            rest.push(line);
-    }
-    return { phone, email, rest };
 }
 export function splitEducationLine(line) {
     const dateMatch = line.match(/(\d{4}\s*[-–—]\s*(?:\d{4}|одоо|present|now))/i);

@@ -7,9 +7,13 @@ import { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
 import { analyzeCvWithGemini } from './lib/geminiAnalysis.js';
 import { buildImprovedCvFromSource, extractCandidateName, injectAboutSection, mergeContactIntoCv, parseCvSections, resolveCandidateName, } from './lib/cvSections.js';
-import { buildProfessionalAbout } from './lib/cvProfessionalSummary.js';
+import { buildProfessionalAbout, convertToFirstPersonMn } from './lib/cvProfessionalSummary.js';
+import { logAiResponse } from './lib/aiDebugLog.js';
+import { isTechCv, resolveDisplayRole } from './lib/cvProfession.js';
 import { createProfessionalCvPdf } from './lib/professionalCvPdf.js';
+import { cvProfileJsonSchema, mergeAnalysisWithCvProfile } from './lib/cvProfile.js';
 import { applyCors, isCorsConfigured } from './lib/cors.js';
+import { extractOpenAiResponseText, formatOpenAiHttpError } from './lib/openaiResponse.js';
 const backendRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 dotenv.config({ path: path.join(backendRoot, '.env') });
 const require = createRequire(import.meta.url);
@@ -226,6 +230,31 @@ function estimateAtsScore(text, skills, weakPoints, targetRole, years) {
 function toStringArray(value) {
     return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : [];
 }
+function normalizeInterviewLine(value) {
+    const clean = value
+        .replace(/^["'`[{(]+/, '')
+        .replace(/["'`\]})]+$/, '')
+        .replace(/^\d+\s*[.)-]\s*/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return clean;
+}
+function looksLikeBrokenInterviewLine(value) {
+    if (!value)
+        return true;
+    if (value.length <= 2)
+        return true;
+    if (/^[;:,.{}[\]()]+$/.test(value))
+        return true;
+    const letters = (value.match(/[A-Za-zА-Яа-яӨөҮүЁё]/g) || []).length;
+    return letters < 3;
+}
+function sanitizeInterviewItems(items, fallback) {
+    const cleaned = items
+        .map(normalizeInterviewLine)
+        .filter((item) => !looksLikeBrokenInterviewLine(item));
+    return cleaned.length >= Math.min(2, fallback.length) ? cleaned : fallback;
+}
 function buildInterviewPrep(payload, language) {
     const role = payload.targetRole || (language === 'mn' ? 'зорилтот ажлын байр' : 'the target role');
     const topSkills = payload.skills.slice(0, 4).join(', ') || (language === 'mn' ? 'CV дээрх гол ур чадварууд' : 'the strongest skills from the CV');
@@ -283,10 +312,10 @@ function buildInterviewPrep(payload, language) {
     };
 }
 function normalizeInterview(input, fallback) {
-    const technical = toStringArray(input?.technical);
-    const hr = toStringArray(input?.hr);
-    const behavioral = toStringArray(input?.behavioral);
-    const suggestedAnswers = toStringArray(input?.suggestedAnswers);
+    const technical = sanitizeInterviewItems(toStringArray(input?.technical), fallback.technical);
+    const hr = sanitizeInterviewItems(toStringArray(input?.hr), fallback.hr);
+    const behavioral = sanitizeInterviewItems(toStringArray(input?.behavioral), fallback.behavioral);
+    const suggestedAnswers = sanitizeInterviewItems(toStringArray(input?.suggestedAnswers), fallback.suggestedAnswers);
     return {
         technical: technical.length ? technical : fallback.technical,
         hr: hr.length ? hr : fallback.hr,
@@ -307,16 +336,41 @@ function isQualityAiRewrittenCv(rewrittenCv, sourceCvText) {
         return false;
     return hasStructure && hasContent;
 }
+function sanitizeSummaryForCv(summary, cvText, language, displayName, targetRole = '') {
+    const aboutFromCv = buildProfessionalAbout({
+        cvText,
+        targetRole,
+        displayName,
+        language,
+        existingAbout: summary,
+    });
+    if (aboutFromCv.length >= 80) {
+        return aboutFromCv;
+    }
+    let s = String(summary || '').trim();
+    if (!s)
+        return s;
+    const accounting = /нягтлан|бүртгэл|accountant|санхүү/i.test(cvText);
+    const tech = isTechCv(cvText);
+    if (accounting && !tech) {
+        s = s
+            .replace(/систем\s*хөгжүүлэх|software\s*engineer|IT\s*салбар|программ\s*ханга/gi, '')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
+    }
+    return language === 'mn' ? convertToFirstPersonMn(s, displayName) : s;
+}
 function finalizeRewrittenCv(rewrittenCv, request, cvText, skills, summary, experienceLevel) {
     const sourceText = cvText.trim();
     if (!sourceText)
         return rewrittenCv.trim();
     const nameFromCv = resolveCandidateName({ candidateName: '', cvText: sourceText, fullName: request.fullName });
+    const displayRole = resolveDisplayRole(request.targetRole, sourceText, request.language);
     let cv = isQualityAiRewrittenCv(rewrittenCv, sourceText)
         ? mergeContactIntoCv(rewrittenCv.trim(), sourceText, request.language)
         : buildImprovedCvFromSource({
             fullName: nameFromCv,
-            targetRole: request.targetRole,
+            targetRole: displayRole,
             cvText: sourceText,
             skills,
             summary,
@@ -325,7 +379,7 @@ function finalizeRewrittenCv(rewrittenCv, request, cvText, skills, summary, expe
         });
     const professionalAbout = buildProfessionalAbout({
         cvText: sourceText,
-        targetRole: request.targetRole,
+        targetRole: displayRole,
         displayName: nameFromCv,
         experienceLevel,
         careerGoals: request.careerGoals,
@@ -382,6 +436,7 @@ const careerAnalysisSchema = {
         'rewrittenCv',
         'summary',
         'interview',
+        'cvProfile',
     ],
     properties: {
         candidateName: { type: 'string' },
@@ -406,35 +461,34 @@ const careerAnalysisSchema = {
                 suggestedAnswers: { type: 'array', items: { type: 'string' } },
             },
         },
+        cvProfile: cvProfileJsonSchema,
     },
 };
 function normalizeAnalysis(input, language, source) {
+    const merged = mergeAnalysisWithCvProfile(input, language);
+    const meta = (input.metadata ?? merged.metadata);
     const base = {
-        candidateName: String(input.candidateName || 'Candidate'),
-        targetRole: String(input.targetRole || 'Generalist'),
-        skills: toStringArray(input.skills),
-        experienceLevel: String(input.experienceLevel || 'Junior'),
-        atsScore: Math.max(0, Math.min(100, Math.round(Number(input.atsScore || 0)))),
-        weakPoints: toStringArray(input.weakPoints),
-        missingSkills: toStringArray(input.missingSkills),
-        careerRecommendations: toStringArray(input.careerRecommendations),
-        cvImprovementSuggestions: toStringArray(input.cvImprovementSuggestions),
-        rewrittenCv: String(input.rewrittenCv || ''),
-        summary: String(input.summary || ''),
+        candidateName: String(merged.candidateName || 'Candidate'),
+        targetRole: String(merged.targetRole || input.targetRole || 'Generalist'),
+        skills: toStringArray(merged.skills),
+        experienceLevel: String(merged.experienceLevel || input.experienceLevel || 'Junior'),
+        atsScore: Math.max(0, Math.min(100, Math.round(Number(merged.atsScore || input.atsScore || 0)))),
+        weakPoints: toStringArray(merged.weakPoints),
+        missingSkills: toStringArray(merged.missingSkills),
+        careerRecommendations: toStringArray(merged.careerRecommendations),
+        cvImprovementSuggestions: toStringArray(merged.cvImprovementSuggestions),
+        rewrittenCv: String(merged.rewrittenCv || ''),
+        summary: String(merged.summary || ''),
     };
-    const interview = normalizeInterview(input.interview, buildInterviewPrep(base, language));
+    const interview = normalizeInterview(merged.interview ?? input.interview, buildInterviewPrep(base, language));
     return {
         ...base,
         interview,
         metadata: {
-            provider: input.metadata?.provider === 'gemini'
-                ? 'gemini'
-                : input.metadata?.provider === 'openai'
-                    ? 'openai'
-                    : 'simulated',
+            provider: meta?.provider === 'gemini' ? 'gemini' : meta?.provider === 'openai' ? 'openai' : 'simulated',
             source,
             language,
-            fallbackReason: input.metadata?.fallbackReason,
+            fallbackReason: meta?.fallbackReason,
         },
     };
 }
@@ -509,6 +563,7 @@ async function requestGeminiAnalysis(request, cvText, source, cvFileName = 'text
         }
         return null;
     }
+    logAiResponse('gemini', 'raw JSON', data);
     return normalizeAnalysis({
         ...data,
         metadata: {
@@ -531,18 +586,24 @@ async function requestOpenAiAnalysis(request, cvText, source) {
                     : 'Write every human-readable value in natural, professional English.',
                 'Keep JSON keys in English.',
                 'Do not invent employers, dates, degrees, certifications, or private facts.',
-                'Analyze ONLY the CV text below. rewrittenCv must be a complete NEW improved CV document from that text, with Mongolian section headers when language is mn: ХОЛБОО БАРИХ, БОЛОВСРОЛ, УР ЧАДВАР, МИНИЙ ТУХАЙ, АЖЛЫН ТУРШЛАГА.',
+                'Extract cvProfile ONLY from the uploaded CV. targetRole must be the candidate\'s profession from THIS CV only — never reuse a previous person\'s role. If they are a student (оюутан), set targetRole from their field of study / мэргэжил / чиглэл (e.g. "Санхүү, эдийн засгийн мэргэжлийн оюутан").',
+                'Job requirements are separate: use them to tailor summary and skills, not to replace the candidate profession.',
+                'Use supportive, advisory tone for roadmap and recommendations (e.g., "хийгээрэй", "бэлдээрэй"), not commanding tone.',
+                'Do not invent employers, dates, degrees, certifications, or private facts.',
+                'rewrittenCv must match cvProfile sections with headers when language is mn: ХОЛБОО БАРИХ, СОНИРХОЛ, УР ЧАДВАР, ХЭЛ, МИНИЙ ТУХАЙ, БОЛОВСРОЛ, АЖЛЫН ТУРШЛАГА.',
             ].join(' '),
         },
         {
             role: 'user',
             content: [
                 `Candidate name: ${request.fullName}`,
-                `Target role: ${request.targetRole}`,
+                `Target role / job requirements: ${request.targetRole}`,
                 `Reported years of experience: ${request.experienceYears}`,
                 `Career goals: ${request.careerGoals || 'Not provided'}`,
                 '',
+                'Fill cvProfile from the CV. Write summary in first person (start with «Миний бие» when language is mn). Put languages only in languages array, not skills.',
                 'Analyze skills, experience level, weak points, missing skills, ATS score, recommendations, CV improvements, and rewrite the CV.',
+                'For roadmap and recommendations in Mongolian, prefer friendly advisory wording like "хийгээрэй", "сайжруулаарай", "бэлдээрэй".',
                 'For rewrittenCv: produce a complete polished CV draft using only facts from the uploaded CV. Improve structure, professional summary, skills grouping, experience bullets, project descriptions, ATS keywords, grammar, and recruiter readability. Start bullets with strong action verbs. Add measurable impact only when evidence exists; otherwise improve clarity without fabricating numbers. Preserve names, contacts, employers, dates, degrees, and certifications exactly when present.',
                 'Return 4 to 6 cvImprovementSuggestions and 4 to 6 careerRecommendations.',
                 'Return interview prep immediately: 4 technical Q&A items, 3 HR Q&A items, 3 behavioral Q&A items, and 4 suggested answer strategies. Each question item should include both the interview question and a concise suggested answer tailored to this CV and target role.',
@@ -552,7 +613,8 @@ async function requestOpenAiAnalysis(request, cvText, source) {
         },
     ];
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), Number(process.env.OPENAI_TIMEOUT_MS || 30000));
+    const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 120000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
         const response = await fetch('https://api.openai.com/v1/responses', {
             method: 'POST',
@@ -563,7 +625,7 @@ async function requestOpenAiAnalysis(request, cvText, source) {
             body: JSON.stringify({
                 model: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
                 input,
-                max_output_tokens: Number(process.env.OPENAI_MAX_OUTPUT_TOKENS || 4000),
+                max_output_tokens: Number(process.env.OPENAI_MAX_OUTPUT_TOKENS || 8192),
                 text: {
                     format: {
                         type: 'json_schema',
@@ -575,22 +637,43 @@ async function requestOpenAiAnalysis(request, cvText, source) {
             }),
             signal: controller.signal,
         });
-        if (!response.ok)
-            return null;
         const data = (await response.json());
-        const outputText = typeof data.output_text === 'string'
-            ? data.output_text
-            : (data.output || [])
-                .flatMap((item) => item.content || [])
-                .filter((item) => item.type === 'output_text' && item.text)
-                .map((item) => item.text)
-                .join('\n');
-        if (!outputText)
+        if (!response.ok) {
+            if (process.env.NODE_ENV !== 'production') {
+                console.error(`[OpenAI] ${formatOpenAiHttpError(response.status, data)}`);
+            }
             return null;
+        }
+        if (data.status === 'incomplete') {
+            if (process.env.NODE_ENV !== 'production') {
+                console.error('[OpenAI] Response incomplete (increase OPENAI_MAX_OUTPUT_TOKENS)');
+            }
+            return null;
+        }
+        const outputText = extractOpenAiResponseText(data);
+        if (!outputText) {
+            if (process.env.NODE_ENV !== 'production') {
+                console.error('[OpenAI] Empty output text in response');
+            }
+            return null;
+        }
         const parsed = JSON.parse(outputText);
-        return normalizeAnalysis({ ...parsed, metadata: { provider: 'openai' } }, request.language, source);
+        logAiResponse('openai', 'raw JSON', parsed);
+        const normalized = normalizeAnalysis({ ...parsed, metadata: { provider: 'openai' } }, request.language, source);
+        logAiResponse('openai', 'normalized (rewrittenCv excerpt)', {
+            candidateName: normalized.candidateName,
+            targetRole: normalized.targetRole,
+            summary: normalized.summary,
+            skills: normalized.skills,
+            rewrittenCv: normalized.rewrittenCv.slice(0, 2000),
+        });
+        return normalized;
     }
-    catch {
+    catch (error) {
+        if (process.env.NODE_ENV !== 'production') {
+            const message = error instanceof Error ? error.message : 'OPENAI_FAILED';
+            console.error(`[OpenAI] ${message}`);
+        }
         return null;
     }
     finally {
@@ -610,19 +693,55 @@ async function analyzeCvPayload(req) {
     }
     const file = req.file;
     const cvFileName = file?.originalname || (cvText ? 'cv-text.txt' : 'cv.txt');
-    const useGemini = Boolean(process.env.GEMINI_API_KEY?.trim());
-    let result;
-    if (useGemini) {
-        const geminiResult = await requestGeminiAnalysis(request, cvText, source, cvFileName);
-        result = geminiResult || buildSimulatedAnalysis(request, cvText, source);
-        if (!geminiResult)
-            result.metadata.fallbackReason = 'GEMINI_FALLBACK';
+    const aiProvider = (process.env.AI_PROVIDER || 'auto').trim().toLowerCase();
+    const hasGemini = aiProvider !== 'openai' && Boolean(process.env.GEMINI_API_KEY?.trim());
+    const hasOpenAi = aiProvider !== 'gemini' && Boolean(process.env.OPENAI_API_KEY?.trim());
+    let result = null;
+    let fallbackReason;
+    if (aiProvider === 'openai' && !hasOpenAi) {
+        throw new ApiError('AI_CONFIG', 'AI_PROVIDER=openai but OPENAI_API_KEY is missing.', 503);
+    }
+    if (aiProvider === 'openai') {
+        result = await requestOpenAiAnalysis(request, cvText, source);
+        if (!result)
+            fallbackReason = 'OPENAI_FAILED';
+    }
+    else if (aiProvider === 'gemini') {
+        result = await requestGeminiAnalysis(request, cvText, source, cvFileName);
+        if (!result)
+            fallbackReason = 'GEMINI_FAILED';
     }
     else {
-        const openAiResult = await requestOpenAiAnalysis(request, cvText, source);
-        result = openAiResult || buildSimulatedAnalysis(request, cvText, source);
-        if (!openAiResult && process.env.OPENAI_API_KEY)
-            result.metadata.fallbackReason = 'OPENAI_FALLBACK';
+        if (hasGemini) {
+            result = await requestGeminiAnalysis(request, cvText, source, cvFileName);
+            if (!result)
+                fallbackReason = 'GEMINI_FAILED';
+        }
+        if (!result && hasOpenAi) {
+            result = await requestOpenAiAnalysis(request, cvText, source);
+            if (result && fallbackReason) {
+                fallbackReason = 'GEMINI_FALLBACK_OPENAI';
+                if (process.env.NODE_ENV !== 'production') {
+                    console.log('[AI] Using OpenAI after Gemini unavailable');
+                }
+            }
+            else if (!result && fallbackReason) {
+                fallbackReason = 'GEMINI_AND_OPENAI_FAILED';
+            }
+            else if (!result) {
+                fallbackReason = 'OPENAI_FAILED';
+            }
+        }
+    }
+    if (!result) {
+        result = buildSimulatedAnalysis(request, cvText, source);
+        fallbackReason = fallbackReason ? `${fallbackReason}_SIMULATED` : 'SIMULATED_ONLY';
+        if (process.env.NODE_ENV !== 'production') {
+            console.warn(`[AI] Simulated analysis only (${fallbackReason})`);
+        }
+    }
+    if (fallbackReason) {
+        result.metadata = { ...result.metadata, fallbackReason };
     }
     const nameFromCv = resolveCandidateName({
         candidateName: result.candidateName,
@@ -633,8 +752,16 @@ async function analyzeCvPayload(req) {
         ...result,
         rewrittenCv: finalizeRewrittenCv(result.rewrittenCv, request, cvText, result.skills, result.summary, result.experienceLevel),
         candidateName: nameFromCv,
-        targetRole: result.targetRole || request.targetRole,
+        targetRole: resolveDisplayRole(result.targetRole || request.targetRole, cvText, request.language),
+        summary: sanitizeSummaryForCv(result.summary, cvText, request.language, nameFromCv, result.targetRole),
     };
+    logAiResponse(result.metadata?.provider || 'analysis', 'final result', {
+        provider: result.metadata?.provider,
+        candidateName: result.candidateName,
+        targetRole: result.targetRole,
+        summary: result.summary,
+        rewrittenCv: result.rewrittenCv,
+    });
     const persistAnalysis = String(req.body.persist ?? 'true') !== 'false';
     const user = getAuthUser(req);
     if (user && persistAnalysis) {
@@ -727,7 +854,7 @@ function buildAnalysisRecord(item) {
         analysis: {
             language: item.request.language,
             candidateName: item.result.candidateName,
-            targetRole: item.request.targetRole,
+            targetRole: item.result.targetRole,
             scores: dashboard.scores,
             summary: dashboard.summary,
             strengths: dashboard.strengths,
@@ -753,6 +880,39 @@ function findSuggestionForUser(db, suggestionId, userId) {
             return { item, suggestion };
     }
     return { item: null, suggestion: null };
+}
+function buildCareerRoadmap(result, language) {
+    const prefix = language === 'mn' ? 'Сар' : 'Month';
+    const steps = [];
+    const primaryRole = result.targetRole.trim() || (language === 'mn' ? 'зорилтот мэргэжил' : 'target role');
+    const missing = result.missingSkills.slice(0, 3);
+    const improvements = result.cvImprovementSuggestions.slice(0, 3);
+    const recommendations = result.careerRecommendations.slice(0, 2);
+    steps.push(language === 'mn'
+        ? `${prefix} 1: ${primaryRole} чиглэлд хэрэгтэй гол ур чадваруудаас ${missing[0] || 'нэг чухал чадвар'} дээр төвлөрч, долоо хоног бүр бодит дасгал хийгээрэй.`
+        : `${prefix} 1: Focus on ${missing[0] || 'one core skill'} needed for ${primaryRole} and practice it weekly with real tasks.`);
+    if (improvements[0]) {
+        steps.push(language === 'mn'
+            ? `${prefix} 2: "${improvements[0]}" дээр тулгуурлан CV-ийн тухайн хэсгийг шинэчлээд 2 хувилбар бэлдээрэй.`
+            : `${prefix} 2: Update your CV section based on "${improvements[0]}" and prepare two improved variants.`);
+    }
+    steps.push(language === 'mn'
+        ? `${prefix} 3: Ажлын туршлага бүрийг хэмжигдэхүйц үр дүнтэй (тоо, хувь, хугацаа) 1-2 bullet болгон сайжруулаарай.`
+        : `${prefix} 3: Rewrite each experience entry with measurable impact (numbers, percentages, time).`);
+    if (missing[1]) {
+        steps.push(language === 'mn'
+            ? `${prefix} 4: ${missing[1]} чадварыг бататгахын тулд жижиг төсөл/кейс хийж GitHub эсвэл portfolio-д нэмээрэй.`
+            : `${prefix} 4: Build a small project/case for ${missing[1]} and add it to your portfolio.`);
+    }
+    if (improvements[1]) {
+        steps.push(language === 'mn'
+            ? `${prefix} 5: "${improvements[1]}" саналын дагуу ATS түлхүүр үгсийг ажлын зарын хэллэгтэй тааруулж CV-д шингээгээрэй.`
+            : `${prefix} 5: Apply "${improvements[1]}" to align ATS keywords with job requirement language.`);
+    }
+    steps.push(language === 'mn'
+        ? `${prefix} 6: Mock interview хийж, ${recommendations[0] || 'зорилтот үүрэг'} рүү өргөдөл өгөөд сар бүр ахиц (ур чадвар, ярилцлага, санал)-аа тэмдэглээрэй.`
+        : `${prefix} 6: Run mock interviews, apply for ${recommendations[0] || 'target roles'}, and track monthly progress.`);
+    return steps.slice(0, 6);
 }
 function toDashboardAnalysis(result) {
     const language = result.metadata?.language === 'en' ? 'en' : 'mn';
@@ -816,7 +976,7 @@ function toDashboardAnalysis(result) {
             currentLevel: result.experienceLevel,
             recommendedRoles: result.careerRecommendations.slice(0, 3),
             missingSkills: result.missingSkills,
-            roadmap: result.cvImprovementSuggestions,
+            roadmap: buildCareerRoadmap(result, language),
             estimatedDuration: copy.estimatedDuration,
         },
     };
@@ -826,11 +986,16 @@ app.get('/api/health', (_req, res) => {
         status: 'ok',
         api: 'AI Career Advisor',
         corsConfigured: isCorsConfigured(),
-        aiProvider: process.env.GEMINI_API_KEY
-            ? 'gemini'
-            : process.env.OPENAI_API_KEY
-                ? 'openai'
-                : 'simulated',
+        aiProvider: (() => {
+            const mode = (process.env.AI_PROVIDER || 'auto').trim().toLowerCase();
+            if (mode === 'openai' || mode === 'gemini')
+                return mode;
+            if (process.env.GEMINI_API_KEY?.trim())
+                return 'gemini';
+            if (process.env.OPENAI_API_KEY?.trim())
+                return 'openai';
+            return 'simulated';
+        })(),
         uptimeMs: Math.round(process.uptime() * 1000),
     });
 });

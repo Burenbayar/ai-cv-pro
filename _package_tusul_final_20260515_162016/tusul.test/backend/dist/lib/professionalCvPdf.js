@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { createRequire } from 'module';
 import { enrichParsedCv, parseCvSections, resolveCandidateName } from './cvSections.js';
+import { resolveDisplayRole } from './cvProfession.js';
 import { normalizeCvTextForParse, sanitizeParsedForTemplate } from './cvTemplateSanitize.js';
 import { CV_THEME, parseContactFields, splitEducationLine, splitExperienceBlock, splitExperienceBlocks, templateLabels, } from './cvTemplateTheme.js';
 const require = createRequire(import.meta.url);
@@ -68,11 +69,8 @@ function drawHeader(doc, name, role, summary, contact, photo, pageW, L) {
     const tx = px + ps + 14;
     const midW = w - ps - 130;
     doc.fillColor('#fff').fontSize(17).text(name.toUpperCase(), tx, top + 16, { width: midW });
-    doc.fillColor('#bfdbfe').fontSize(9).text(`${L.cv} · ${role}`, tx, top + 38, { width: midW });
-    if (summary) {
-        const short = summary.length > 240 ? `${summary.slice(0, 237)}…` : summary;
-        doc.fillColor('#e0f2fe').fontSize(8).text(short, tx, top + 52, { width: midW, lineGap: 2 });
-    }
+    doc.fillColor('#bfdbfe').fontSize(9).text(role, tx, top + 38, { width: midW });
+    doc.fillColor('#93c5fd').fontSize(7.5).text(L.cv, tx, top + 52, { width: midW });
     const rx = pageW - M - 118;
     let ry = top + 18;
     if (contact.phone) {
@@ -83,6 +81,11 @@ function drawHeader(doc, name, role, summary, contact, photo, pageW, L) {
     if (contact.email) {
         doc.fillColor('#93c5fd').fontSize(7.5).text(L.email, rx, ry, { width: 110, align: 'right' });
         doc.fillColor('#fff').fontSize(7.5).text(contact.email, rx, ry + 10, { width: 110, align: 'right' });
+        ry += 26;
+    }
+    if (contact.location) {
+        doc.fillColor('#93c5fd').fontSize(7.5).text(L.address, rx, ry, { width: 110, align: 'right' });
+        doc.fillColor('#fff').fontSize(7.5).text(contact.location, rx, ry + 10, { width: 110, align: 'right' });
     }
     return top + HEADER_H;
 }
@@ -97,7 +100,7 @@ export function createProfessionalCvPdf(input) {
         cvText: normalizedRaw || normalizedCv,
         fullName: input.candidateName,
     }) || 'Candidate';
-    const role = input.targetRole.trim() || '';
+    const role = resolveDisplayRole(input.targetRole, normalizedRaw || normalizedCv, input.language);
     const contact = parseContactFields(parsed.contact);
     const experienceBlocks = splitExperienceBlocks(parsed.experience);
     const photo = photoBuffer(input.profileImage);
@@ -125,6 +128,10 @@ export function createProfessionalCvPdf(input) {
     if (parsed.languages.length) {
         sy = sectionTitle(doc, sbX, sy, sbW, L.languages, CV_THEME.navyLight);
         sy = bullets(doc, sbX, sy, sbW, parsed.languages) + 8;
+    }
+    if (parsed.hobbies.length) {
+        sy = sectionTitle(doc, sbX, sy, sbW, L.hobbies, CV_THEME.navyLight);
+        sy = bullets(doc, sbX, sy, sbW, parsed.hobbies) + 8;
     }
     if (parsed.skills.length) {
         sy = sectionTitle(doc, sbX, sy, sbW, L.skills, CV_THEME.navyLight);
